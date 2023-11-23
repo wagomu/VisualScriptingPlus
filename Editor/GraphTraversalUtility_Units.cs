@@ -44,6 +44,8 @@ namespace CHM.VisualScriptingPlus.Editor
         }
         private static IEnumerable<(IUnit, List<Guid>)> GetUnitsRecursiveInternal(FlowGraph graph, GraphRecursionContext context)
         {
+            if (graph == null)
+                yield break;
             if(context.visited.Contains(graph))
                 yield break;
             context.visited.Add(graph);
