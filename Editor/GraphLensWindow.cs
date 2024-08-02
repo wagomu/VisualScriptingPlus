@@ -3,11 +3,11 @@ using UnityEngine;
 using UnityEngine.UIElements;
 using UnityEditor.UIElements;
 using System.Collections.Generic;
-using static CHM.VisualScriptingPlus.Editor.GraphUtility;
+using static CHM.VisualScriptingKai.Editor.GraphUtility;
 using Unity.VisualScripting;
 using System.Linq;
 
-namespace CHM.VisualScriptingPlus.Editor
+namespace CHM.VisualScriptingKai.Editor
 {
     // TODO: Search for warnings ((IUnit.Analysis() as UnitAnalysis).warnings)
     // TODO: [Future work] Operations on query items (maybe replace-all is possible?)
@@ -16,6 +16,8 @@ namespace CHM.VisualScriptingPlus.Editor
         private DropdownField queryType;
         private TextField queryFolders;
         private TextField queryString;
+        private ObjectField queryObject;
+        private Button queryRefresh;
         private QueryResultsListView queryResultsListView;
         private readonly List<GraphSource> graphAssetSourceCache = new();
         private static class QueryType
@@ -24,12 +26,14 @@ namespace CHM.VisualScriptingPlus.Editor
             public static readonly string StickyNotes = "Sticky Notes";
             public static readonly string States = "States";
             public static readonly string StateTransitions = "State Transitions";
+            public static readonly string References = "References";
         }
         private readonly List<string> queryOptions = new(){
             QueryType.Nodes,
             QueryType.StickyNotes,
             QueryType.States,
             QueryType.StateTransitions,
+            QueryType.References,
         };
         private static class EditorPrefKeys
         {
@@ -51,7 +55,7 @@ namespace CHM.VisualScriptingPlus.Editor
             VisualElement root = rootVisualElement;
 
             // Import UXML
-            var visualTree = AssetDatabase.LoadAssetAtPath<VisualTreeAsset>("Packages/com.chocola-mint.visual-scripting-plus/Editor/Resources/GraphLensWindow.uxml");
+            var visualTree = PackageUtility.LoadPackageAsset<VisualTreeAsset>("Editor/Resources/GraphLensWindow.uxml");
             VisualElement visualTreeRoot = visualTree.Instantiate();
             root.Add(visualTreeRoot);
 
@@ -60,9 +64,13 @@ namespace CHM.VisualScriptingPlus.Editor
             FetchElement(visualTreeRoot, "query-folders", out queryFolders);
             FetchElement(visualTreeRoot, "query-string", out queryString);
             FetchElement(visualTreeRoot, "query-results", out queryResultsListView);
+            queryObject = new ObjectField("Search Object");
+            queryRefresh = new Button();
+            queryRefresh.text = "Refresh";
 
             queryFolders.value = EditorPrefs.GetString(EditorPrefKeys.QueryFolders, "Assets");
-            queryFolders.RegisterValueChangedCallback(changeEvent => {
+            queryFolders.RegisterValueChangedCallback(changeEvent => 
+            {
                 EditorPrefs.SetString(EditorPrefKeys.QueryFolders, queryFolders.value);
                 // Folders changed, so the cache needs to be updated.
                 UpdateGraphAssetSourceCache();
@@ -73,18 +81,53 @@ namespace CHM.VisualScriptingPlus.Editor
             queryType.index = EditorPrefs.GetInt(EditorPrefKeys.QueryType, 0);
             if(queryType.index >= queryOptions.Count)
                 queryType.index = 0;
-            queryType.RegisterValueChangedCallback(changeEvent => {
+            queryType.RegisterValueChangedCallback(changeEvent => 
+            {
                 EditorPrefs.SetInt(EditorPrefKeys.QueryType, queryType.index);
+                if (queryType.index == 4)
+                {
+                    queryFolders.parent.Insert(queryFolders.parent.IndexOf(queryString) + 1, queryRefresh);
+                    queryFolders.parent.Insert(queryFolders.parent.IndexOf(queryString) + 1, queryObject);
+                    queryFolders.parent.Remove(queryString);
+                }
+                else
+                {
+                    queryFolders.parent.Insert(queryFolders.parent.IndexOf(queryObject) + 1, queryString);
+                    if (queryObject.parent == queryFolders.parent)
+                        queryFolders.parent.Remove(queryObject);
+                    if (queryRefresh.parent == queryFolders.parent)
+                    queryFolders.parent.Remove(queryRefresh);
+                }
                 ExecuteQuery();
             });
 
             queryString.value = EditorPrefs.GetString(EditorPrefKeys.QueryString, "");
-            queryString.RegisterValueChangedCallback(changeEvent => {
+            queryString.RegisterValueChangedCallback(changeEvent => 
+            {
                 // TrimStart because leading whitespaces make fuzzy search fail.
                 queryString.SetValueWithoutNotify(
                     changeEvent.newValue.TrimStart());
                 ExecuteQuery();
             });
+
+            queryObject.objectType = typeof(Object);
+            queryObject.RegisterValueChangedCallback(changeEvent =>
+            {
+                ExecuteQuery();
+            });
+            
+            if (queryType.index == 4)
+            {
+                queryFolders.parent.Insert(queryFolders.parent.IndexOf(queryString) + 1, queryRefresh);
+                queryFolders.parent.Insert(queryFolders.parent.IndexOf(queryString) + 1, queryObject);
+                queryFolders.parent.Remove(queryString);
+            }
+
+            queryRefresh.tooltip = "Manual refresh is required when you change the value of an Object literal.";
+            queryRefresh.clicked += () =>
+            {
+                ExecuteQuery();
+            };
 
             // First query.
             UpdateGraphAssetSourceCache();
@@ -149,6 +192,12 @@ namespace CHM.VisualScriptingPlus.Editor
                 queryResultsListView.LoadQueryResults(FindStateTransitions(
                     sources,
                     queryString.value));
+            }
+            else if (queryType.value == QueryType.References)
+            {
+                queryResultsListView.LoadQueryResults(FindReferencesToObject(
+                    sources,
+                    queryObject.value));
             }
             else throw new System.ArgumentException($"Unknown query type: {queryType.text}");
         }
